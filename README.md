@@ -71,6 +71,29 @@ Here’s the step-by-step of what Jelly Request does behind the scenes:
 3. **Requests the good stuff**: Any movies not in your collection get added to your Jellyseerr requests.
 4. **Repeats on schedule**: It keeps this up quietly in the background, so your library stays fresh.
 
+🔧 4K Request Option
+
+Jelly Request supports a toggle to control whether it requests 4K versions of movies or not.
+
+You can set:
+	•	IS_4K_REQUEST=true – Requests 4K versions (default)
+	•	IS_4K_REQUEST=false – Requests 1080p or lower
+
+🔹 In Unraid:
+
+During container setup, add or edit the IS_4K_REQUEST environment variable:
+	1.	Click “Add another variable”
+	2.	Set:
+	•	Key: IS_4K_REQUEST
+	•	Value: true (or false if you don’t want 4K)
+
+🔹 In Docker Compose:
+
+environment:
+  - JELLYSEERR_URL=http://192.168.0.29:5054
+  - API_KEY=your-api-key
+  - IS_4K_REQUEST=true  # or false
+
 ![Untitled](https://github.com/user-attachments/assets/d8cc3468-a3a1-447a-8444-8f590e20d222)
 
 ---
