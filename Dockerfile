@@ -1,7 +1,8 @@
 FROM python:3.11-slim
-ARG IS_4K_REQUEST=false
+ARG IS_4K_REQUEST=true
+ARG AUTO_APPROVE=true
 ENV IS_4K_REQUEST=$IS_4K_REQUEST
-ENV AUTO_APPROVE=false
+ENV AUTO_APPROVE=$AUTO_APPROVE
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
