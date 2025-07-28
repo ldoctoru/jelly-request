@@ -126,10 +126,9 @@ def make_request(tmdb_id, media_id):
     payload = {
         "mediaType": "movie",
         "tmdbId": tmdb_id,
+        "mediaId": media_id,
         "is4k": IS_4K_REQUEST
     }
-    if AUTO_APPROVE and media_id:
-        payload["mediaId"] = media_id
 
     try:
         with requests.Session() as session:
@@ -138,8 +137,7 @@ def make_request(tmdb_id, media_id):
             session.mount('https://', HTTPAdapter(max_retries=retries))
             res = session.post(f"{JELLYSEERR_URL}/api/v1/request", json=payload, headers=headers, timeout=(5, 15))
             if res.status_code == 201:
-                status = "auto-approved" if AUTO_APPROVE else "pending approval"
-                logger.info(f"✅ Requested movie ({status}) for tmdbId: {tmdb_id}")
+                logger.info(f"✅ Requested movie (tmdbId: {tmdb_id}, mediaId: {media_id}, is4k: {IS_4K_REQUEST})")
                 return True, res.text
             else:
                 logger.warning(f"⚠️ Request failed: {res.status_code} {res.text}")
