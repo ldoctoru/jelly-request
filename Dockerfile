@@ -1,4 +1,5 @@
 FROM python:3.11-slim
+ENV IS_4K_REQUEST=false
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
