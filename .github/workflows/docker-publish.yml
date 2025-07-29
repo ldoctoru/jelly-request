@@ -7,10 +7,6 @@ on:
         description: 'Enable 4K requests (true/false)'
         required: false
         default: 'true'
-      auto_approve:
-        description: 'Automatically approve requests (true/false)'
-        required: false
-        default: 'true'
       docker_tag:
         description: 'Docker image tag (e.g., latest, v1.0.0)'
         required: true
@@ -62,14 +58,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             IS_4K_REQUEST=${{ github.event.inputs.is_4k_request }}
-            AUTO_APPROVE=${{ github.event.inputs.auto_approve }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Sign the Docker image
         uses: sigstore/cosign-installer@v3
         if: ${{ success() }}
-      
+
       - name: Cosign image signature
         if: ${{ success() }}
         env:
