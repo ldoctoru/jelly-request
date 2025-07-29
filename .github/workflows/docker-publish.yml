@@ -7,6 +7,22 @@ on:
         description: 'Enable 4K requests (true/false)'
         required: false
         default: 'true'
+      auto_approve:
+        description: 'Auto-approve requests (true/false)'
+        required: false
+        default: 'true'
+      use_jwt:
+        description: 'Use JWT login instead of API key (true/false)'
+        required: false
+        default: 'false'
+      user_email:
+        description: 'Email for JWT login (required if use_jwt=true)'
+        required: false
+        default: ''
+      user_password:
+        description: 'Password for JWT login (required if use_jwt=true)'
+        required: false
+        default: ''
       docker_tag:
         description: 'Docker image tag (e.g., latest, v1.0.0)'
         required: true
@@ -58,6 +74,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             IS_4K_REQUEST=${{ github.event.inputs.is_4k_request }}
+            AUTO_APPROVE=${{ github.event.inputs.auto_approve }}
+            USE_JWT=${{ github.event.inputs.use_jwt }}
+            USER_EMAIL=${{ github.event.inputs.user_email }}
+            USER_PASSWORD=${{ github.event.inputs.user_password }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
