@@ -50,6 +50,7 @@ def authenticate_user():
             logger.info("✅ Authenticated with Jellyseerr")
         else:
             logger.error(f"❌ Auth failed: {res.status_code} {res.text}")
+            logger.error(f"❌ Authentication failed: {res.status_code} - {res.text}")
             ACCESS_TOKEN = None
     except Exception as e:
         logger.error(f"❌ Auth error: {e}")
