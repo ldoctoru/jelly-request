@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir requests beautifulsoup4
 RUN mkdir -p /logs
 
 # Copy script into container
-COPY imdb_to_jellyseerr.py /app/imdb_to_jellyseerr.py
+COPY imdb.py /app/imdb.py
 
 # Set working directory
 WORKDIR /app
