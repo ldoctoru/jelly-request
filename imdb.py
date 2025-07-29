@@ -22,7 +22,8 @@ DEBUG_MODE = os.environ.get('DEBUG_MODE', 'SIMPLE').upper()
 IS_4K_REQUEST = os.environ.get('IS_4K_REQUEST', 'true').lower() == 'true'
 LOG_FILE = "/logs/imdb_jellyseerr.log"
 
-ACCESS_TOKEN = None  # Will hold JWT after login
+ACCESS_TOKEN = None
+TOKEN_OBTAINED_AT = None
 
 # === Logging ===
 logging_level = logging.DEBUG if DEBUG_MODE == 'VERBOSE' else logging.INFO
@@ -39,35 +40,69 @@ logger.addHandler(console_handler)
 
 
 def authenticate_user():
-    global ACCESS_TOKEN
+    global ACCESS_TOKEN, TOKEN_OBTAINED_AT
     try:
-        payload = {
-            "email": JELLYSEERR_EMAIL,
-            "password": JELLYSEERR_PASSWORD
-        }
+        payload = {"email": JELLYSEERR_EMAIL, "password": JELLYSEERR_PASSWORD}
         res = requests.post(f"{JELLYSEERR_URL}/api/v1/auth/local", json=payload)
         if res.status_code == 200:
             ACCESS_TOKEN = res.json().get("accessToken")
-            logger.info("✅ Successfully authenticated with JWT")
+            TOKEN_OBTAINED_AT = datetime.utcnow()
+            logger.info("✅ Authenticated with Jellyseerr")
         else:
-            logger.error(f"❌ Authentication failed: {res.status_code} - {res.text}")
+            logger.error(f"❌ Auth failed: {res.status_code} {res.text}")
+            ACCESS_TOKEN = None
     except Exception as e:
-        logger.error(f"❌ Error during authentication: {e}")
+        logger.error(f"❌ Auth error: {e}")
+        ACCESS_TOKEN = None
+
+
+def token_expired(max_age_minutes=360):
+    if not TOKEN_OBTAINED_AT:
+        return True
+    return (datetime.utcnow() - TOKEN_OBTAINED_AT).total_seconds() > max_age_minutes * 60
 
 
 def get_headers():
-    return {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Connection": "close"
-    }
+    return {"Authorization": f"Bearer {ACCESS_TOKEN}", "Connection": "close"}
+
+
+def send_request(method, url, **kwargs):
+    global ACCESS_TOKEN
+
+    if token_expired():
+        logger.info("🔄 Token expired, re-authenticating...")
+        authenticate_user()
+
+    headers = kwargs.pop("headers", {})
+    headers.update(get_headers())
+    kwargs["headers"] = headers
+
+    try:
+        with requests.Session() as session:
+            retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+            session.mount('http://', HTTPAdapter(max_retries=retries))
+            session.mount('https://', HTTPAdapter(max_retries=retries))
+
+            req = getattr(session, method.lower())(url, **kwargs)
+
+            if req.status_code == 401:
+                logger.warning("⚠️ 401 Unauthorized — retrying login...")
+                authenticate_user()
+                headers = get_headers()
+                kwargs["headers"] = headers
+                req = getattr(session, method.lower())(url, **kwargs)
+
+            return req
+    except Exception as e:
+        logger.error(f"❌ Request failed: {e}")
+        return None
 
 
 def normalize_title(title):
     if not title:
         return ""
     title = re.sub(r'[^\w\s]', '', title.lower())
-    title = ' '.join(title.split())
-    return title
+    return ' '.join(title.split())
 
 
 def scrape_imdb_top_movies(limit=MOVIE_LIMIT):
@@ -80,33 +115,29 @@ def scrape_imdb_top_movies(limit=MOVIE_LIMIT):
 
         soup = BeautifulSoup(response.text, "html.parser")
         json_ld = soup.find("script", type="application/ld+json")
-        if json_ld:
-            json_data = json.loads(json_ld.string)
-            movies = []
-            seen = set()
-            if "itemListElement" in json_data:
-                for item in json_data["itemListElement"]:
-                    title = item.get("item", {}).get("name")
-                    if title:
-                        norm = normalize_title(title)
-                        if norm and norm not in seen:
-                            movies.append(title)
-                            seen.add(norm)
-                    if len(movies) >= limit:
-                        break
-                return movies
-
-        movie_elements = soup.select("ul.ipc-metadata-list li.ipc-metadata-list-summary-item a h3")
-        movie_elements = movie_elements[:limit]
         movies = []
         seen = set()
-        for element in movie_elements:
+
+        if json_ld:
+            json_data = json.loads(json_ld.string)
+            for item in json_data.get("itemListElement", []):
+                title = item.get("item", {}).get("name")
+                if title:
+                    norm = normalize_title(title)
+                    if norm not in seen:
+                        movies.append(title)
+                        seen.add(norm)
+                if len(movies) >= limit:
+                    break
+            return movies
+
+        elements = soup.select("ul.ipc-metadata-list li.ipc-metadata-list-summary-item a h3")
+        for element in elements[:limit]:
             title = element.get_text().strip().split(". ")[-1]
-            if title:
-                norm = normalize_title(title)
-                if norm and norm not in seen:
-                    movies.append(title)
-                    seen.add(norm)
+            norm = normalize_title(title)
+            if norm and norm not in seen:
+                movies.append(title)
+                seen.add(norm)
             if len(movies) >= limit:
                 break
         return movies
@@ -115,25 +146,11 @@ def scrape_imdb_top_movies(limit=MOVIE_LIMIT):
         return []
 
 
-def search_jellyseerr(movie_name, max_retries=3):
+def search_jellyseerr(movie_name):
     encoded = urllib.parse.quote(movie_name, safe='')
-    for attempt in range(1, max_retries + 1):
-        try:
-            with requests.Session() as session:
-                retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-                session.mount('http://', HTTPAdapter(max_retries=retries))
-                session.mount('https://', HTTPAdapter(max_retries=retries))
-                res = session.get(
-                    f"{JELLYSEERR_URL}/api/v1/search",
-                    params={"query": encoded},
-                    headers=get_headers(),
-                    timeout=(5, 15)
-                )
-                if res.status_code == 200:
-                    return res.json()
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Attempt {attempt} failed for '{movie_name}': {e}")
-            time.sleep(2 ** attempt)
+    res = send_request("GET", f"{JELLYSEERR_URL}/api/v1/search", params={"query": encoded}, timeout=(5, 15))
+    if res and res.status_code == 200:
+        return res.json()
     return None
 
 
@@ -148,8 +165,6 @@ def get_movie_details(movie_name, json_data):
             imdb_id = result.get("mediaInfo", {}).get("imdbId") or result.get("imdbId")
             media_id = result.get("id")
             tmdb_id = result.get("tmdbId", media_id)
-            if not title or not tmdb_id:
-                continue
             if norm_query in norm_title:
                 return imdb_id, media_id, tmdb_id
     return None, None, None
@@ -162,33 +177,22 @@ def make_request(tmdb_id, media_id):
         "mediaId": media_id,
         "is4k": IS_4K_REQUEST
     }
-    try:
-        with requests.Session() as session:
-            retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-            session.mount('http://', HTTPAdapter(max_retries=retries))
-            session.mount('https://', HTTPAdapter(max_retries=retries))
-            res = session.post(
-                f"{JELLYSEERR_URL}/api/v1/request",
-                json=payload,
-                headers=get_headers(),
-                timeout=(5, 15)
-            )
-            if res.status_code == 201:
-                logger.info(f"✅ Requested movie (tmdbId: {tmdb_id}, mediaId: {media_id}, is4k: {IS_4K_REQUEST})")
-                return True, res.text
-            else:
-                logger.warning(f"⚠️ Request failed: {res.status_code} {res.text}")
-                return False, res.text
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Request error: {e}")
-        return False, str(e)
+    res = send_request("POST", f"{JELLYSEERR_URL}/api/v1/request", json=payload, timeout=(5, 15))
+    if res:
+        if res.status_code == 201:
+            logger.info(f"✅ Requested (tmdbId: {tmdb_id}, mediaId: {media_id}, 4K: {IS_4K_REQUEST})")
+            return True, res.text
+        else:
+            logger.warning(f"⚠️ Request failed: {res.status_code} {res.text}")
+            return False, res.text
+    return False, "No response"
 
 
 def main():
-    logger.info(f"Jelly Request started with JWT (4K: {IS_4K_REQUEST})")
+    logger.info(f"Jelly Request started with JWT auth (4K: {IS_4K_REQUEST})")
     authenticate_user()
     if not ACCESS_TOKEN:
-        logger.error("❌ No access token retrieved. Exiting.")
+        logger.error("❌ No JWT token retrieved. Exiting.")
         return
 
     while True:
@@ -206,13 +210,13 @@ def main():
                         if tmdb_id:
                             make_request(tmdb_id, media_id)
                         else:
-                            logger.info(f"Not found in Jellyseerr: {movie}")
+                            logger.info(f"❌ Not found in Jellyseerr: {movie}")
                     except Exception as e:
                         logger.error(f"❌ Error with '{movie}': {e}")
         except Exception as e:
-            logger.error(f"Main loop error: {e}")
+            logger.error(f"❌ Main loop error: {e}")
         finally:
-            logger.info(f"Sleeping {RUN_INTERVAL_DAYS} day(s)")
+            logger.info(f"Sleeping for {RUN_INTERVAL_DAYS} day(s)")
             time.sleep(RUN_INTERVAL_DAYS * 86400)
 
 
